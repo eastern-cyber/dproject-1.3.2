@@ -16,11 +16,19 @@ interface ReferrerData {
   token_id?: string;
 }
 
+interface ThreeKUsersData {
+  user_id?: string;
+  name?: string;
+  // สามารถเพิ่ม field อื่นๆ ตามต้องการ
+}
+
 export default function ReferrerDetails({ params }: { params: Promise<{ referrerId: string }> }) {
     const [resolvedParams, setResolvedParams] = useState<{ referrerId: string }>({ referrerId: '' });
     const [referrerData, setReferrerData] = useState<ReferrerData | null>(null);
+    const [threeKUserData, setThreeKUserData] = useState<ThreeKUsersData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [threeKError, setThreeKError] = useState<string | null>(null);
     const router = useRouter();
 
     useEffect(() => {
@@ -32,31 +40,47 @@ export default function ReferrerDetails({ params }: { params: Promise<{ referrer
     }, [params]);
 
     useEffect(() => {
-        const fetchReferrerData = async () => {
+        const fetchAllData = async () => {
             if (!resolvedParams.referrerId) return;
 
             try {
                 setLoading(true);
                 setError(null);
+                setThreeKError(null);
                 
-                const response = await fetch(`/api/referrer/${resolvedParams.referrerId}`);
-                
-                if (!response.ok) {
-                    if (response.status === 404) {
+                // ดึงข้อมูลจาก 2 แหล่งพร้อมกัน
+                const [referrerResponse, threeKResponse] = await Promise.all([
+                    fetch(`/api/referrer/${resolvedParams.referrerId}`),
+                    fetch(`/api/3k-users/${resolvedParams.referrerId}`) // API endpoint ใหม่
+                ]);
+
+                // ตรวจสอบ response ของ referrer data
+                if (!referrerResponse.ok) {
+                    if (referrerResponse.status === 404) {
                         throw new Error("ไม่พบข้อมูลผู้แนะนำ");
                     }
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    throw new Error(`HTTP error! status: ${referrerResponse.status}`);
                 }
                 
-                const data = await response.json();
-                
-                if (data.error) {
-                    setError(data.error);
+                const referrerData = await referrerResponse.json();
+                const threeKData = await threeKResponse.json();
+
+                // ตั้งค่า referrer data
+                if (referrerData.error) {
+                    setError(referrerData.error);
                 } else {
-                    setReferrerData(data);
+                    setReferrerData(referrerData);
                 }
+
+                // ตั้งค่า 3K user data
+                if (threeKResponse.ok && !threeKData.error) {
+                    setThreeKUserData(threeKData);
+                } else {
+                    setThreeKError(threeKData.error || "ไม่พบข้อมูลชื่อจากระบบ 3K");
+                }
+
             } catch (error) {
-                console.error("Error fetching referrer data:", error);
+                console.error("Error fetching data:", error);
                 setError(error instanceof Error ? error.message : "เกิดข้อผิดพลาดในการโหลดข้อมูล");
             } finally {
                 setLoading(false);
@@ -64,7 +88,7 @@ export default function ReferrerDetails({ params }: { params: Promise<{ referrer
         };
 
         if (resolvedParams.referrerId) {
-            fetchReferrerData();
+            fetchAllData();
         }
     }, [resolvedParams.referrerId]);
 
@@ -72,7 +96,7 @@ export default function ReferrerDetails({ params }: { params: Promise<{ referrer
         const data = {
             var1: resolvedParams.referrerId || "N/A",
             var2: referrerData?.email || "N/A",
-            var3: referrerData?.name || "N/A",
+            var3: threeKUserData?.name || referrerData?.name || "N/A", // ใช้ชื่อจาก 3K ก่อน ถ้าไม่มีค่อยใช้จาก referrer
             var4: referrerData?.token_id || "N/A",
         };
 
@@ -116,9 +140,24 @@ export default function ReferrerDetails({ params }: { params: Promise<{ referrer
                             <p className="text-lg text-gray-300">
                                 <b>อีเมล:</b> {referrerData.email}
                             </p>
-                            <p className="text-lg text-gray-300 mt-1">
-                                <b>ชื่อ:</b> {referrerData.name}
-                            </p>
+                            
+                            {/* แสดงชื่อจาก 3K database */}
+                            {threeKUserData?.name ? (
+                                <p className="text-lg text-green-400 mt-1">
+                                    <b>ชื่อ:</b> {threeKUserData.name}
+                                </p>
+                            ) : threeKError ? (
+                                <p className="text-lg text-yellow-400 mt-1">
+                                    <b>ชื่อ:</b> <span className="text-gray-400">{referrerData.name}</span>
+                                    <br />
+                                    <small className="text-yellow-500">({threeKError})</small>
+                                </p>
+                            ) : (
+                                <p className="text-lg text-gray-300 mt-1">
+                                    <b>ชื่อ:</b> {referrerData.name}
+                                </p>
+                            )}
+                            
                             <p className="text-lg text-red-600 mt-1">
                                 <b>Token ID: {referrerData.token_id} </b>
                             </p>

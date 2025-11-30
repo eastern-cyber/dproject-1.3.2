@@ -1,9 +1,9 @@
-import { sql } from '@vercel/postgres';
+import { queryDB } from '../../../lib/db';
 
 export async function GET() {
   try {
     // Test database connection
-    const result = await sql`SELECT NOW() as current_time`;
+    const result = await queryDB('SELECT NOW() as current_time');
     
     return Response.json({
       success: true,

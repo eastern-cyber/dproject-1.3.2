@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { queryDB, sql } from '../../../lib/db';
 import { NextResponse } from 'next/server';
 
 // Helper function to sanitize user data
@@ -14,10 +14,10 @@ export async function GET(request) {
 
     if (email) {
       // Get user by email
-      const result = await sql`
-        SELECT * FROM users 
-        WHERE email = ${email}
-      `;
+      const result = await queryDB(
+        'SELECT * FROM users WHERE email = $1',
+        [email]
+      );
 
       if (result.rows.length > 0) {
         const user = sanitizeUserData(result.rows[0]);
@@ -34,13 +34,13 @@ export async function GET(request) {
       }
     } else {
       // Get all users (without sensitive data)
-      const result = await sql`
+      const result = await queryDB(`
         SELECT 
           id, name, email, user_id, referrer_id, 
           token_id, created_at, updated_at, plan_a,
           profile_picture, profile_media_type
         FROM users
-      `;
+      `);
 
       return NextResponse.json({
         success: true,
@@ -64,9 +64,10 @@ export async function POST(request) {
 
     if (action === 'login') {
       // Handle login
-      const result = await sql`
-        SELECT * FROM users WHERE email = ${email}
-      `;
+      const result = await queryDB(
+        'SELECT * FROM users WHERE email = $1',
+        [email]
+      );
 
       if (result.rows.length === 0) {
         return NextResponse.json({
@@ -77,8 +78,7 @@ export async function POST(request) {
 
       const user = result.rows[0];
       
-      // Verify password (you should use proper password hashing)
-      // For now, using simple comparison - UPDATE THIS with proper bcrypt
+      // Simple password verification (UPDATE THIS with proper bcrypt)
       if (user.password_hash === password) {
         const sanitizedUser = sanitizeUserData(user);
         return NextResponse.json({
@@ -97,15 +97,13 @@ export async function POST(request) {
     // Handle other POST actions
     switch (action) {
       case 'forgot_password':
-        // Generate reset code
         const resetCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
         
-        await sql`
-          UPDATE users 
-          SET reset_code = ${resetCode}, reset_code_expires = ${expiresAt.toISOString()}
-          WHERE email = ${email}
-        `;
+        await queryDB(
+          'UPDATE users SET reset_code = $1, reset_code_expires = $2 WHERE email = $3',
+          [resetCode, expiresAt.toISOString(), email]
+        );
 
         return NextResponse.json({
           success: true,
@@ -152,22 +150,29 @@ export async function PUT(request) {
           }, { status: 400 });
         }
 
-        let updateQuery = sql`
-          UPDATE users 
-          SET name = ${name}, updated_at = CURRENT_TIMESTAMP
-        `;
+        let query;
+        let params;
 
         if (remove_profile_picture) {
-          updateQuery = sql`
+          query = `
             UPDATE users 
-            SET name = ${name}, profile_picture = NULL, 
+            SET name = $1, profile_picture = NULL, 
                 profile_media_type = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE email = $2
+            RETURNING *
           `;
+          params = [name, email];
+        } else {
+          query = `
+            UPDATE users 
+            SET name = $1, updated_at = CURRENT_TIMESTAMP
+            WHERE email = $2
+            RETURNING *
+          `;
+          params = [name, email];
         }
 
-        updateQuery = sql`${updateQuery} WHERE email = ${email} RETURNING *`;
-
-        const result = await updateQuery;
+        const result = await queryDB(query, params);
 
         if (result.rows.length > 0) {
           const updatedUser = sanitizeUserData(result.rows[0]);
@@ -187,9 +192,10 @@ export async function PUT(request) {
         const { current_password, new_password } = updateData;
         
         // Verify current password
-        const userResult = await sql`
-          SELECT password_hash FROM users WHERE email = ${email}
-        `;
+        const userResult = await queryDB(
+          'SELECT password_hash FROM users WHERE email = $1',
+          [email]
+        );
 
         if (userResult.rows.length === 0) {
           return NextResponse.json({
@@ -200,7 +206,7 @@ export async function PUT(request) {
 
         const user = userResult.rows[0];
         
-        // Simple password verification - UPDATE THIS with proper bcrypt
+        // Simple password verification
         if (user.password_hash !== current_password) {
           return NextResponse.json({
             success: false,
@@ -209,11 +215,10 @@ export async function PUT(request) {
         }
 
         // Update password
-        await sql`
-          UPDATE users 
-          SET password_hash = ${new_password}, updated_at = CURRENT_TIMESTAMP
-          WHERE email = ${email}
-        `;
+        await queryDB(
+          'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE email = $2',
+          [new_password, email]
+        );
 
         return NextResponse.json({
           success: true,
